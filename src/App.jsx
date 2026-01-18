@@ -2,194 +2,188 @@ import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 const App = () => {
-  const [step, setStep] = useState(1);
-  const [timeLeft, setTimeLeft] = useState(480000); // 8 min en milisegundos
-  const [timerActive, setTimerActive] = useState(false);
-  const [playingTeams, setPlayingTeams] = useState([0, 1]);
-  const [lastWinner, setLastWinner] = useState(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  // CARGA DE LOCALSTORAGE
+  const getSaved = (key, def) => {
+    const s = localStorage.getItem(key);
+    return s ? JSON.parse(s) : def;
+  };
 
-  const timerRef = useRef(null);
-
-  // Inicialización de 3 equipos con 5 jugadores vacíos cada uno
-  const [teams, setTeams] = useState(
-    [1, 2, 3].map(id => ({
-      id,
-      name: '',
-      players: Array.from({ length: 5 }, (_, i) => ({ id: i, name: '', goals: 0, kicks: 0 })),
-      points: 0,
-      color: id === 1 ? '#adff2f' : id === 2 ? '#a855f7' : '#f97316'
-    }))
+  const [step, setStep] = useState(() => getSaved('step', 1));
+  const [teams, setTeams] = useState(() => getSaved('teams', []));
+  const [history, setHistory] = useState(() => getSaved('history', []));
+  const [jugadoresManual, setJugadoresManual] = useState(() =>
+    getSaved('jugadores', Array.from({ length: 15 }, (_, i) => ({ id: i, name: '', nivel: 5 })))
   );
 
-  // Lógica del Cronómetro (cada 10ms para milisegundos)
+  const [timeLeft, setTimeLeft] = useState(480000);
+  const [timerActive, setTimerActive] = useState(false);
+  const [playingTeams, setPlayingTeams] = useState([0, 1]);
+  const [animateScore, setAnimateScore] = useState(null);
+  const [activeKick, setActiveKick] = useState(null);
+  const timerRef = useRef(null);
+
+  // PERSISTENCIA AUTOMÁTICA
+  useEffect(() => {
+    localStorage.setItem('step', JSON.stringify(step));
+    localStorage.setItem('teams', JSON.stringify(teams));
+    localStorage.setItem('history', JSON.stringify(history));
+    localStorage.setItem('jugadores', JSON.stringify(jugadoresManual));
+  }, [step, teams, history, jugadoresManual]);
+
+  // CRONOMETRO
   useEffect(() => {
     if (timerActive && timeLeft > 0) {
-      timerRef.current = setInterval(() => {
-        setTimeLeft(prev => Math.max(0, prev - 10));
-      }, 10);
-    } else {
-      clearInterval(timerRef.current);
-    }
+      timerRef.current = setInterval(() => setTimeLeft(prev => Math.max(0, prev - 10)), 10);
+    } else { clearInterval(timerRef.current); }
     return () => clearInterval(timerRef.current);
   }, [timerActive, timeLeft]);
 
   const formatTime = (ms) => {
-    const minutes = Math.floor(ms / 60000);
-    const seconds = Math.floor((ms % 60000) / 1000);
-    const centiseconds = Math.floor((ms % 1000) / 10);
-    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(centiseconds).padStart(2, '0')}`;
+    const m = Math.floor(ms / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
-  const getCurrentGoals = (tIdx) => {
-    return teams[tIdx].players.reduce((sum, p) => sum + p.goals, 0);
+  const configurarEquipos = (t1, t2, t3) => {
+    setTeams([
+      { id: 1, name: 'EQUIPO 1', players: t1, points: 0 },
+      { id: 2, name: 'EQUIPO 2', players: t2, points: 0 },
+      { id: 3, name: 'EQUIPO 3', players: t3, points: 0 }
+    ]);
+    setStep(3);
   };
 
-  const handleTeamChange = (index, value) => {
-    const newIdx = parseInt(value);
-    const otherIdx = index === 0 ? playingTeams[1] : playingTeams[0];
-
-    if (newIdx === otherIdx) {
-      alert("¡Un equipo no puede jugar contra sí mismo!");
-      return;
-    }
-
-    setIsRefreshing(true);
-    const newPlaying = [...playingTeams];
-    newPlaying[index] = newIdx;
-    setPlayingTeams(newPlaying);
-    setTimeout(() => setIsRefreshing(false), 400);
+  const iniciarManual = () => {
+    const validos = jugadoresManual.filter(j => j.name.trim());
+    if (validos.length < 6) return alert("Mínimo 6 jugadores");
+    const m = (arr) => arr.filter(j => j.name).map(j => ({ ...j, goals: 0, goalsMatch: 0, kicks: 0, kicksMatch: 0 }));
+    configurarEquipos(m(jugadoresManual.slice(0, 5)), m(jugadoresManual.slice(5, 10)), m(jugadoresManual.slice(10, 15)));
   };
 
-  const addStat = (tIdx, pIdx, type) => {
-    const newTeams = [...teams];
-    newTeams[tIdx].players[pIdx][type] += 1;
-    setTeams(newTeams);
+  const generarEquilibrado = () => {
+    const validos = jugadoresManual.filter(j => j.name.trim());
+    const ordenados = [...validos].sort((a, b) => b.nivel - a.nivel);
+    const t = [[], [], []];
+    ordenados.forEach((j, i) => t[i % 3].push({ ...j, goals: 0, goalsMatch: 0, kicks: 0, kicksMatch: 0 }));
+    configurarEquipos(t[0], t[1], t[2]);
+  };
+
+  const handleStat = (tIdx, pId, type) => {
+    const nt = [...teams];
+    const pIdx = nt[tIdx].players.findIndex(p => p.id === pId);
+    nt[tIdx].players[pIdx][type + 'Match'] += 1;
+    if (type === 'goals') { setAnimateScore(tIdx); setTimeout(() => setAnimateScore(null), 500); }
+    else { setActiveKick(pId); setTimeout(() => setActiveKick(null), 400); }
+    setTeams(nt);
   };
 
   const finishMatch = (winnerIdx) => {
-    if (window.confirm(`¿Confirmar victoria de ${teams[winnerIdx].name || 'Equipo ' + (winnerIdx + 1)}?`)) {
-      const newTeams = [...teams];
-      newTeams[winnerIdx].points += 3;
-      completeMatch(newTeams, winnerIdx);
-    }
-  };
+    if (!window.confirm("¿Finalizar partido?")) return;
+    const g1 = teams[playingTeams[0]].players.reduce((s, p) => s + p.goalsMatch, 0);
+    const g2 = teams[playingTeams[1]].players.reduce((s, p) => s + p.goalsMatch, 0);
 
-  const finishDraw = () => {
-    if (window.confirm("¿Confirmar empate? (1 punto para cada equipo)")) {
-      const newTeams = [...teams];
-      newTeams[playingTeams[0]].points += 1;
-      newTeams[playingTeams[1]].points += 1;
-      completeMatch(newTeams, 'draw');
-    }
-  };
+    setHistory([{ t1: teams[playingTeams[0]].name, t2: teams[playingTeams[1]].name, score: `${g1}-${g2}`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...history]);
 
-  const completeMatch = (updatedTeams, winnerType) => {
-    setTeams(updatedTeams);
-    setLastWinner(winnerType);
+    const nt = [...teams];
+    if (winnerIdx !== null) nt[winnerIdx].points += 3;
+    else { nt[playingTeams[0]].points += 1; nt[playingTeams[1]].points += 1; }
+
+    nt.forEach(t => t.players.forEach(p => {
+      p.goals += p.goalsMatch; p.kicks += p.kicksMatch;
+      p.goalsMatch = 0; p.kicksMatch = 0;
+    }));
+    setTeams(nt);
     setTimerActive(false);
     setTimeLeft(480000);
-    setTimeout(() => {
-      setLastWinner(null);
-      alert("Resultado guardado. ¡Siguiente partido!");
-    }, 1000);
   };
 
-  // Cálculos de tablas
-  const sortedTeams = [...teams].sort((a, b) => b.points - a.points);
-  const allPlayers = teams.flatMap(t => t.players.filter(p => p.name).map(p => ({ ...p, teamName: t.name || `E${t.id}` })));
-  const topScorers = [...allPlayers].filter(p => p.goals > 0).sort((a, b) => b.goals - a.goals).slice(0, 5);
-  const topKickers = [...allPlayers].filter(p => p.kicks > 0).sort((a, b) => b.kicks - a.kicks).slice(0, 5);
-
-  if (step === 1) {
-    return (
-      <div className="app-container">
-        <h1 className="title-main">REGISTRO DE EQUIPOS</h1>
-        {teams.map((team, tIdx) => (
-          <div key={team.id} className="card-setup">
-            <h2 className="section-label" style={{ color: team.color }}>EQUIPO {team.id}</h2>
-            <input
-              className="input-field equipo-name"
-              placeholder="Nombre del Equipo"
-              value={team.name}
-              onChange={(e) => {
-                const nt = [...teams]; nt[tIdx].name = e.target.value; setTeams(nt);
-              }}
-            />
-            <div className="jugadores-grid">
-              {team.players.map((p, pIdx) => (
-                <div key={pIdx} className="input-group-jugador">
-                  <span className="nro-jugador">{pIdx + 1}</span>
-                  <input
-                    className="input-field-small"
-                    placeholder="Nombre Jugador"
-                    value={p.name}
-                    onChange={(e) => {
-                      const nt = [...teams]; nt[tIdx].players[pIdx].name = e.target.value; setTeams(nt);
-                    }}
-                  />
-                </div>
-              ))}
+  // VISTA 1: NOMBRES
+  if (step === 1) return (
+    <div className="app-container">
+      <h1 className="title-main">REGISTRO DE JUGADORES</h1>
+      {[0, 5, 10].map((start, gIdx) => (
+        <div key={gIdx} className="card-setup" style={{ borderLeft: `4px solid ${['#adff2f', '#a855f7', '#f97316'][gIdx]}` }}>
+          <h3 style={{ color: ['#adff2f', '#a855f7', '#f97316'][gIdx] }}>EQUIPO {gIdx + 1}</h3>
+          {jugadoresManual.slice(start, start + 5).map((j, i) => (
+            <div key={j.id} className="input-group-jugador">
+              <span className="nro-jugador">{start + i + 1}</span>
+              <input className="input-field-small" placeholder="Nombre..." value={j.name}
+                onChange={e => { const n = [...jugadoresManual]; n[j.id].name = e.target.value; setJugadoresManual(n); }} />
             </div>
+          ))}
+        </div>
+      ))}
+      <button className="btn-action-start" onClick={iniciarManual}>INICIAR TORNEO</button>
+      <button className="btn-draw" style={{ width: '100%', marginTop: '10px' }} onClick={() => setStep(2)}>GENERAR POR NIVELES →</button>
+    </div>
+  );
+
+  // VISTA 2: NIVELES
+  if (step === 2) return (
+    <div className="app-container">
+      <h1 className="title-main">NIVELES (1-10)</h1>
+      <div className="card-setup">
+        {jugadoresManual.filter(j => j.name).map(j => (
+          <div key={j.id} className="input-group-jugador" style={{ justifyContent: 'space-between', paddingRight: '15px' }}>
+            <span style={{ color: 'white' }}>{j.name}</span>
+            <input type="number" className="nivel-input-simple" value={j.nivel}
+              onChange={e => { const n = [...jugadoresManual]; n[j.id].nivel = parseInt(e.target.value); setJugadoresManual(n); }} />
           </div>
         ))}
-        <button className="btn-action-start" onClick={() => setStep(2)}>INICIAR TORNEO</button>
+        <button className="btn-action-start" style={{ marginTop: '20px' }} onClick={generarEquilibrado}>GENERAR E INICIAR</button>
+        <button className="btn-draw" style={{ width: '100%', marginTop: '10px' }} onClick={() => setStep(1)}>VOLVER</button>
       </div>
-    );
-  }
+    </div>
+  );
+
+  // VISTA 3: JUEGO
+  const allP = teams.flatMap(t => t.players.filter(p => p.name).map(p => ({ ...p, teamName: t.name })));
+  const scorers = [...allP].filter(p => p.goals > 0).sort((a, b) => b.goals - a.goals).slice(0, 5);
+  const kickers = [...allP].filter(p => p.kicks > 0).sort((a, b) => b.kicks - a.kicks).slice(0, 5);
 
   return (
     <div className="app-container">
-      {/* CRONÓMETRO */}
-      <div className={`timer-box ${timerActive ? 'timer-running' : ''}`}>
+      <div className="timer-box">
         <div className="timer-digits">{formatTime(timeLeft)}</div>
-        <div className="timer-controls">
-          <button onClick={() => setTimerActive(!timerActive)} className="btn-timer-control">
-            {timerActive ? 'PAUSAR' : 'INICIAR'}
-          </button>
-          <button onClick={finishDraw} className="btn-draw">EMPATE</button>
-        </div>
+        <button className="btn-timer-control" onClick={() => setTimerActive(!timerActive)}>{timerActive ? 'PAUSA' : 'INICIAR'}</button>
       </div>
 
-      {/* MARCADOR EN VIVO */}
       <div className="live-scoreboard">
         <div className="score-team">
-          <span className="score-val">{getCurrentGoals(playingTeams[0])}</span>
-          <small>{teams[playingTeams[0]].name || 'E1'}</small>
+          <span className={`score-val ${animateScore === playingTeams[0] ? 'score-pop' : ''}`}>
+            {teams[playingTeams[0]].players.reduce((s, p) => s + p.goalsMatch, 0)}
+          </span>
+          <small>{teams[playingTeams[0]].name}</small>
         </div>
         <div className="score-separator">-</div>
         <div className="score-team">
-          <span className="score-val">{getCurrentGoals(playingTeams[1])}</span>
-          <small>{teams[playingTeams[1]].name || 'E2'}</small>
+          <span className={`score-val ${animateScore === playingTeams[1] ? 'score-pop' : ''}`}>
+            {teams[playingTeams[1]].players.reduce((s, p) => s + p.goalsMatch, 0)}
+          </span>
+          <small>{teams[playingTeams[1]].name}</small>
         </div>
       </div>
 
-      {/* SECCIÓN EQUIPOS EN JUEGO */}
-      <div className="match-selection-area">
-        <h3 className="section-label">EQUIPOS EN JUEGO:</h3>
-        <div className={`selector-container ${timerActive ? 'locked' : ''}`}>
-          {timerActive && <div className="lock-overlay">⚠️ PAUSA EL RELOJ</div>}
-          <select disabled={timerActive} value={playingTeams[0]} onChange={e => handleTeamChange(0, e.target.value)}>
-            {teams.map((t, i) => <option key={i} value={i}>{t.name || `Equipo ${i + 1}`}</option>)}
-          </select>
-          <span className="vs-badge">VS</span>
-          <select disabled={timerActive} value={playingTeams[1]} onChange={e => handleTeamChange(1, e.target.value)}>
-            {teams.map((t, i) => <option key={i} value={i}>{t.name || `Equipo ${i + 1}`}</option>)}
-          </select>
-        </div>
+      <div className="selector-container">
+        <select value={playingTeams[0]} onChange={e => setPlayingTeams([parseInt(e.target.value), playingTeams[1]])}>
+          {teams.map((t, i) => <option key={i} value={i}>{t.name}</option>)}
+        </select>
+        <span className="vs-badge">VS</span>
+        <select value={playingTeams[1]} onChange={e => setPlayingTeams([playingTeams[0], parseInt(e.target.value)])}>
+          {teams.map((t, i) => <option key={i} value={i}>{t.name}</option>)}
+        </select>
       </div>
 
-      {/* INTERFAZ DE JUEGO */}
-      <div className={`match-grid ${isRefreshing ? 'refreshing' : ''}`}>
+      <div className="match-grid">
         {playingTeams.map(tIdx => (
-          <div key={tIdx} className="team-column">
-            <button className="btn-win" onClick={() => finishMatch(tIdx)}>GANÓ {teams[tIdx].name || 'E' + (tIdx + 1)}</button>
-            {teams[tIdx].players.filter(p => p.name).map((p) => (
-              <div key={p.id} className="player-card-live">
-                <span className="player-name-live">{p.name}</span>
-                <div className="btn-stats-group">
-                  <button onClick={() => addStat(tIdx, p.id, 'goals')} className="btn-stat goal">⚽ {p.goals}</button>
-                  <button onClick={() => addStat(tIdx, p.id, 'kicks')} className="btn-stat kick">🦴 {p.kicks}</button>
+          <div key={tIdx}>
+            <button className={`btn-win btn-win-${teams[tIdx]?.id}`} onClick={() => finishMatch(tIdx)}>🏆 GANÓ {teams[tIdx]?.name}</button>
+            {teams[tIdx].players.map(p => (
+              <div key={p.id} className={`player-card-live ${activeKick === p.id ? 'kick-shake' : ''}`}>
+                <span style={{ color: 'white', fontWeight: '800' }}>{p.name}</span>
+                <div style={{ display: 'flex', gap: '5px', marginTop: '10px' }}>
+                  <button className="btn-stat goal" onClick={() => handleStat(tIdx, p.id, 'goals')}>⚽ {p.goalsMatch}</button>
+                  <button className="btn-stat kick" onClick={() => handleStat(tIdx, p.id, 'kicks')}>🦴 {p.kicksMatch}</button>
                 </div>
               </div>
             ))}
@@ -197,47 +191,35 @@ const App = () => {
         ))}
       </div>
 
-      {/* ESTADÍSTICAS */}
+      <div className="history-section">
+        <h3>📜 HISTORIAL</h3>
+        {history.map((h, i) => (
+          <div key={i} className="history-item"><span>{h.t1}</span> {h.score} <span>{h.t2}</span> <small>{h.time}</small></div>
+        ))}
+      </div>
+
       <div className="tables-section">
-        <div className="table-wrapper full-width">
+        <div className="full-width">
           <h3>📊 POSICIONES</h3>
           <table className="custom-table">
             <thead><tr><th>Equipo</th><th>Pts</th></tr></thead>
-            <tbody>
-              {sortedTeams.map(t => (
-                <tr key={t.id} className={lastWinner === t.id || (lastWinner === 'draw' && (t.id === teams[playingTeams[0]].id || t.id === teams[playingTeams[1]].id)) ? 'points-pop' : ''}>
-                  <td>{t.name || 'E' + t.id}</td>
-                  <td>{t.points}</td>
-                </tr>
-              ))}
-            </tbody>
+            <tbody>{teams.sort((a, b) => b.points - a.points).map(t => (<tr key={t.id}><td>{t.name}</td><td>{t.points}</td></tr>))}</tbody>
           </table>
         </div>
-
-        <div className="table-wrapper">
-          <h3 style={{ color: '#db2777' }}>⚽ TOP GOLES</h3>
+        <div>
+          <h3 style={{ color: '#db2777' }}>⚽ GOLEADORES</h3>
           <table className="custom-table">
-            <tbody>
-              {topScorers.map((p, i) => (
-                <tr key={i}><td>{p.name} <br /><small>{p.teamName}</small></td><td>{p.goals}</td></tr>
-              ))}
-            </tbody>
+            <tbody>{scorers.map((p, i) => (<tr key={i}><td>{p.name}</td><td>{p.goals}</td></tr>))}</tbody>
           </table>
         </div>
-
-        <div className="table-wrapper">
+        <div>
           <h3 style={{ color: '#ea580c' }}>🦴 RÚSTICOS</h3>
           <table className="custom-table">
-            <tbody>
-              {topKickers.map((p, i) => (
-                <tr key={i}><td>{p.name} <br /><small>{p.teamName}</small></td><td>{p.kicks}</td></tr>
-              ))}
-            </tbody>
+            <tbody>{kickers.map((p, i) => (<tr key={i}><td>{p.name}</td><td>{p.kicks}</td></tr>))}</tbody>
           </table>
         </div>
       </div>
-
-      <button onClick={() => { if (confirm("¿Reiniciar?")) window.location.reload() }} className="btn-reset-all">REINICIAR TORNEO</button>
+      <button className="btn-reset-all" onClick={() => { if (confirm("¿Borrar todo?")) { localStorage.clear(); window.location.reload(); } }}>REINICIAR TODO</button>
     </div>
   );
 };
