@@ -30,7 +30,7 @@ const App = () => {
     localStorage.setItem('jugadores', JSON.stringify(jugadoresManual));
   }, [step, teams, history, jugadoresManual]);
 
-  // CRONOMETRO
+  // CRONOMETRO CON MILISEGUNDOS
   useEffect(() => {
     if (timerActive && timeLeft > 0) {
       timerRef.current = setInterval(() => setTimeLeft(prev => Math.max(0, prev - 10)), 10);
@@ -41,7 +41,8 @@ const App = () => {
   const formatTime = (ms) => {
     const m = Math.floor(ms / 60000);
     const s = Math.floor((ms % 60000) / 1000);
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    const mil = Math.floor((ms % 1000) / 10);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(mil).padStart(2, '0')}`;
   };
 
   const configurarEquipos = (t1, t2, t3) => {
@@ -68,36 +69,71 @@ const App = () => {
     configurarEquipos(t[0], t[1], t[2]);
   };
 
-  const handleStat = (tIdx, pId, type) => {
+  const handleStat = (tIdx, pId, type, amount) => {
     const nt = [...teams];
     const pIdx = nt[tIdx].players.findIndex(p => p.id === pId);
-    nt[tIdx].players[pIdx][type + 'Match'] += 1;
-    if (type === 'goals') { setAnimateScore(tIdx); setTimeout(() => setAnimateScore(null), 500); }
-    else { setActiveKick(pId); setTimeout(() => setActiveKick(null), 400); }
+    const current = nt[tIdx].players[pIdx][type + 'Match'];
+    if (amount < 0 && current <= 0) return;
+    nt[tIdx].players[pIdx][type + 'Match'] += amount;
+    if (type === 'goals' && amount > 0) {
+      setAnimateScore(tIdx);
+      setTimeout(() => setAnimateScore(null), 500);
+    }
+    if (type === 'kicks' && amount > 0) {
+      setActiveKick(pId);
+      setTimeout(() => setActiveKick(null), 400);
+    }
     setTeams(nt);
   };
 
+  const handleTeamSelection = (side, value) => {
+    const newIdx = parseInt(value);
+    const otherSide = side === 0 ? 1 : 0;
+    if (newIdx === playingTeams[otherSide]) {
+      const nextAvailable = [0, 1, 2].find(i => i !== newIdx);
+      const newPair = [...playingTeams];
+      newPair[side] = newIdx;
+      newPair[otherSide] = nextAvailable;
+      setPlayingTeams(newPair);
+    } else {
+      const newPair = [...playingTeams];
+      newPair[side] = newIdx;
+      setPlayingTeams(newPair);
+    }
+  };
+
   const finishMatch = (winnerIdx) => {
-    if (!window.confirm("¿Finalizar partido?")) return;
+    const isDraw = winnerIdx === null;
+    if (!window.confirm(isDraw ? "¿Confirmar empate?" : "¿Finalizar partido?")) return;
+
     const g1 = teams[playingTeams[0]].players.reduce((s, p) => s + p.goalsMatch, 0);
     const g2 = teams[playingTeams[1]].players.reduce((s, p) => s + p.goalsMatch, 0);
 
-    setHistory([{ t1: teams[playingTeams[0]].name, t2: teams[playingTeams[1]].name, score: `${g1}-${g2}`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...history]);
+    setHistory([{
+      t1: teams[playingTeams[0]].name,
+      t2: teams[playingTeams[1]].name,
+      score: `${g1}-${g2}`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }, ...history]);
 
     const nt = [...teams];
-    if (winnerIdx !== null) nt[winnerIdx].points += 3;
-    else { nt[playingTeams[0]].points += 1; nt[playingTeams[1]].points += 1; }
+    if (isDraw) {
+      nt[playingTeams[0]].points += 1;
+      nt[playingTeams[1]].points += 1;
+    } else {
+      nt[winnerIdx].points += 3;
+    }
 
     nt.forEach(t => t.players.forEach(p => {
       p.goals += p.goalsMatch; p.kicks += p.kicksMatch;
       p.goalsMatch = 0; p.kicksMatch = 0;
     }));
+
     setTeams(nt);
     setTimerActive(false);
     setTimeLeft(480000);
   };
 
-  // VISTA 1: NOMBRES
   if (step === 1) return (
     <div className="app-container">
       <h1 className="title-main">REGISTRO DE JUGADORES</h1>
@@ -118,7 +154,6 @@ const App = () => {
     </div>
   );
 
-  // VISTA 2: NIVELES
   if (step === 2) return (
     <div className="app-container">
       <h1 className="title-main">NIVELES (1-10)</h1>
@@ -136,7 +171,6 @@ const App = () => {
     </div>
   );
 
-  // VISTA 3: JUEGO
   const allP = teams.flatMap(t => t.players.filter(p => p.name).map(p => ({ ...p, teamName: t.name })));
   const scorers = [...allP].filter(p => p.goals > 0).sort((a, b) => b.goals - a.goals).slice(0, 5);
   const kickers = [...allP].filter(p => p.kicks > 0).sort((a, b) => b.kicks - a.kicks).slice(0, 5);
@@ -145,31 +179,49 @@ const App = () => {
     <div className="app-container">
       <div className="timer-box">
         <div className="timer-digits">{formatTime(timeLeft)}</div>
-        <button className="btn-timer-control" onClick={() => setTimerActive(!timerActive)}>{timerActive ? 'PAUSA' : 'INICIAR'}</button>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '10px' }}>
+          <button className="btn-timer-control" onClick={() => setTimerActive(!timerActive)}>
+            {timerActive ? 'PAUSA' : 'INICIAR'}
+          </button>
+          <button className="btn-draw" style={{ padding: '0 20px' }} onClick={() => finishMatch(null)}>
+            🤝 EMPATE
+          </button>
+        </div>
       </div>
 
       <div className="live-scoreboard">
         <div className="score-team">
           <span className={`score-val ${animateScore === playingTeams[0] ? 'score-pop' : ''}`}>
-            {teams[playingTeams[0]].players.reduce((s, p) => s + p.goalsMatch, 0)}
+            {teams[playingTeams[0]]?.players.reduce((s, p) => s + p.goalsMatch, 0)}
           </span>
-          <small>{teams[playingTeams[0]].name}</small>
+          <small>{teams[playingTeams[0]]?.name}</small>
         </div>
         <div className="score-separator">-</div>
         <div className="score-team">
           <span className={`score-val ${animateScore === playingTeams[1] ? 'score-pop' : ''}`}>
-            {teams[playingTeams[1]].players.reduce((s, p) => s + p.goalsMatch, 0)}
+            {teams[playingTeams[1]]?.players.reduce((s, p) => s + p.goalsMatch, 0)}
           </span>
-          <small>{teams[playingTeams[1]].name}</small>
+          <small>{teams[playingTeams[1]]?.name}</small>
         </div>
       </div>
 
       <div className="selector-container">
-        <select value={playingTeams[0]} onChange={e => setPlayingTeams([parseInt(e.target.value), playingTeams[1]])}>
+        {/* Los selectores ahora se desactivan si timerActive es true */}
+        <select
+          value={playingTeams[0]}
+          onChange={e => handleTeamSelection(0, e.target.value)}
+          disabled={timerActive}
+          style={{ opacity: timerActive ? 0.5 : 1, cursor: timerActive ? 'not-allowed' : 'pointer' }}
+        >
           {teams.map((t, i) => <option key={i} value={i}>{t.name}</option>)}
         </select>
         <span className="vs-badge">VS</span>
-        <select value={playingTeams[1]} onChange={e => setPlayingTeams([playingTeams[0], parseInt(e.target.value)])}>
+        <select
+          value={playingTeams[1]}
+          onChange={e => handleTeamSelection(1, e.target.value)}
+          disabled={timerActive}
+          style={{ opacity: timerActive ? 0.5 : 1, cursor: timerActive ? 'not-allowed' : 'pointer' }}
+        >
           {teams.map((t, i) => <option key={i} value={i}>{t.name}</option>)}
         </select>
       </div>
@@ -177,13 +229,21 @@ const App = () => {
       <div className="match-grid">
         {playingTeams.map(tIdx => (
           <div key={tIdx}>
-            <button className={`btn-win btn-win-${teams[tIdx]?.id}`} onClick={() => finishMatch(tIdx)}>🏆 GANÓ {teams[tIdx]?.name}</button>
+            <button className={`btn-win btn-win-${teams[tIdx]?.id}`} onClick={() => finishMatch(tIdx)}>
+              🏆 GANÓ {teams[tIdx]?.name}
+            </button>
             {teams[tIdx].players.map(p => (
               <div key={p.id} className={`player-card-live ${activeKick === p.id ? 'kick-shake' : ''}`}>
                 <span style={{ color: 'white', fontWeight: '800' }}>{p.name}</span>
                 <div style={{ display: 'flex', gap: '5px', marginTop: '10px' }}>
-                  <button className="btn-stat goal" onClick={() => handleStat(tIdx, p.id, 'goals')}>⚽ {p.goalsMatch}</button>
-                  <button className="btn-stat kick" onClick={() => handleStat(tIdx, p.id, 'kicks')}>🦴 {p.kicksMatch}</button>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <button className="btn-stat goal" onClick={() => handleStat(tIdx, p.id, 'goals', 1)}>⚽ {p.goalsMatch}</button>
+                    <button style={{ background: '#444', border: 'none', color: 'white', borderRadius: '4px', fontSize: '10px' }} onClick={() => handleStat(tIdx, p.id, 'goals', -1)}>-</button>
+                  </div>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <button className="btn-stat kick" onClick={() => handleStat(tIdx, p.id, 'kicks', 1)}>🦴 {p.kicksMatch}</button>
+                    <button style={{ background: '#444', border: 'none', color: 'white', borderRadius: '4px', fontSize: '10px' }} onClick={() => handleStat(tIdx, p.id, 'kicks', -1)}>-</button>
+                  </div>
                 </div>
               </div>
             ))}
