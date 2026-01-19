@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
- "homepage": "https://agumarini94.github.io/mi-app-futbol/",
+ "homepage": "https://agumarini94.github.io/test.github.io/",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
