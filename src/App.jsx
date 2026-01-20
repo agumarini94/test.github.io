@@ -1,111 +1,121 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Scoreboard from './Scoreboard';
-import { texts, getSaved } from './helpers';
+import { getSaved } from './helpers';
+import { useLanguage } from './useLanguage';
 import './App.css';
 
 const App = () => {
-  const [lang, setLang] = useState(() => getSaved('lang', 'es'));
+  const { t, lang, changeLanguage } = useLanguage();
+
   const [step, setStep] = useState(() => getSaved('step', 0));
   const [teams, setTeams] = useState(() => getSaved('teams', []));
   const [history, setHistory] = useState(() => getSaved('history', []));
   const [config, setConfig] = useState(() => getSaved('config', { minutes: 8, teamCount: 3, gameType: 5 }));
   const [jugadoresManual, setJugadoresManual] = useState(() => getSaved('jugadores', []));
-  const [timeLeft, setTimeLeft] = useState(config.minutes * 60000);
+  const [timeLeft, setTimeLeft] = useState(() => getSaved('timeLeft', 8 * 60000));
   const [timerActive, setTimerActive] = useState(false);
   const [playingTeams, setPlayingTeams] = useState([0, 1]);
   const [victoryEffect, setVictoryEffect] = useState(false);
   const timerRef = useRef(null);
 
-  const t = texts[lang] || texts['es'];
-
   useEffect(() => {
-    localStorage.setItem('lang', JSON.stringify(lang));
-    localStorage.setItem('step', JSON.stringify(step));
-    localStorage.setItem('teams', JSON.stringify(teams));
-    localStorage.setItem('history', JSON.stringify(history));
-    localStorage.setItem('jugadores', JSON.stringify(jugadoresManual));
-    localStorage.setItem('config', JSON.stringify(config));
-  }, [lang, step, teams, history, jugadoresManual, config]);
+    const data = { step, teams, history, jugadores: jugadoresManual, config, timeLeft };
+    Object.entries(data).forEach(([k, v]) => localStorage.setItem(k, JSON.stringify(v)));
+  }, [step, teams, history, jugadoresManual, config, timeLeft]);
 
   useEffect(() => {
     if (timerActive && timeLeft > 0) {
-      timerRef.current = setInterval(() => setTimeLeft(prev => Math.max(0, prev - 10)), 10);
-    } else { clearInterval(timerRef.current); }
+      timerRef.current = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 10) {
+            clearInterval(timerRef.current);
+            setTimerActive(false);
+            autoFinish();
+            return 0;
+          }
+          return prev - 10;
+        });
+      }, 10);
+    } else {
+      clearInterval(timerRef.current);
+    }
     return () => clearInterval(timerRef.current);
-  }, [timerActive, timeLeft]);
-
-  const formatTimeFull = (ms) => {
-    const m = Math.floor(ms / 60000);
-    const s = Math.floor((ms % 60000) / 1000);
-    const c = Math.floor((ms % 1000) / 10);
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(c).padStart(2, '0')}`;
-  };
+  }, [timerActive]);
 
   const handleStat = (tIdx, pId, type, amount) => {
-    const nt = [...teams];
-    const pIdx = nt[tIdx].players.findIndex(p => p.id === pId);
-    const newVal = nt[tIdx].players[pIdx][type + 'Match'] + amount;
-    if (newVal < 0) return;
-    nt[tIdx].players[pIdx][type + 'Match'] = newVal;
-    setTeams(nt);
+    if (timeLeft === config.minutes * 60000) return;
+    setTeams(prev => {
+      const nt = JSON.parse(JSON.stringify(prev));
+      const player = nt[tIdx].players.find(p => p.id === pId);
+      if (player && player[type + 'Match'] + amount >= 0) player[type + 'Match'] += amount;
+      return nt;
+    });
   };
 
   const finishMatch = (winnerIdx) => {
-    const t1 = teams[playingTeams[0]];
-    const t2 = teams[playingTeams[1]];
-    const g1 = t1.players.reduce((s, p) => s + p.goalsMatch, 0);
-    const g2 = t2.players.reduce((s, p) => s + p.goalsMatch, 0);
-    const match = { id: Date.now(), team1: t1.name, team2: t2.name, score1: g1, score2: g2, winner: winnerIdx === null ? 'draw' : teams[winnerIdx].name };
-    setHistory([match, ...history]);
-    const nt = [...teams];
-    nt.forEach(team => team.players.forEach(p => {
-      p.goals += p.goalsMatch; p.kicks += p.kicksMatch;
-      p.goalsMatch = 0; p.kicksMatch = 0;
-    }));
-    setTeams(nt);
+    const [idx1, idx2] = playingTeams;
+    const g1 = teams[idx1].players.reduce((s, p) => s + p.goalsMatch, 0);
+    const g2 = teams[idx2].players.reduce((s, p) => s + p.goalsMatch, 0);
+    const matchWinner = winnerIdx === null ? 'draw' : teams[winnerIdx].name;
+
+    setHistory([{ id: Date.now(), team1: teams[idx1].name, team2: teams[idx2].name, score1: g1, score2: g2, winner: matchWinner }, ...history]);
+    setTeams(prev => prev.map(team => ({
+      ...team,
+      players: team.players.map(p => ({ ...p, goals: p.goals + p.goalsMatch, kicks: p.kicks + p.kicksMatch, goalsMatch: 0, kicksMatch: 0 }))
+    })));
     setTimerActive(false);
     setTimeLeft(config.minutes * 60000);
     setVictoryEffect(true);
     setTimeout(() => setVictoryEffect(false), 600);
   };
 
-  const resetMatchOnly = () => {
-    const nt = [...teams];
-    nt.forEach(team => team.players.forEach(p => {
-      p.goalsMatch = 0; p.kicksMatch = 0;
-    }));
-    setTeams(nt);
+  const autoFinish = () => {
+    const g1 = teams[playingTeams[0]].players.reduce((s, p) => s + p.goalsMatch, 0);
+    const g2 = teams[playingTeams[1]].players.reduce((s, p) => s + p.goalsMatch, 0);
+    finishMatch(g1 > g2 ? playingTeams[0] : (g2 > g1 ? playingTeams[1] : null));
+  };
+
+  const resetAllStats = () => {
+    if (window.confirm(t.resetTable)) {
+      setHistory([]);
+      setTeams(prev => prev.map(team => ({
+        ...team,
+        players: team.players.map(p => ({ ...p, goals: 0, kicks: 0, goalsMatch: 0, kicksMatch: 0 }))
+      })));
+    }
   };
 
   const getTableData = () => {
     return teams.map(team => {
-      let pj = 0, pg = 0, pe = 0, pp = 0, gf = 0, gc = 0, pts = 0;
+      let stats = { pj: 0, pg: 0, pe: 0, pp: 0, gf: 0, gc: 0, pts: 0 };
       history.forEach(m => {
         if (m.team1 === team.name || m.team2 === team.name) {
-          pj++;
+          stats.pj++;
           const isT1 = m.team1 === team.name;
-          const myG = isT1 ? m.score1 : m.score2;
-          const opG = isT1 ? m.score2 : m.score1;
-          gf += myG; gc += opG;
-          if (m.winner === 'draw') { pe++; pts += 1; }
-          else if (m.winner === team.name) { pg++; pts += 3; }
-          else { pp++; }
+          const [myG, opG] = isT1 ? [m.score1, m.score2] : [m.score2, m.score1];
+          stats.gf += myG; stats.gc += opG;
+          if (m.winner === 'draw') { stats.pe++; stats.pts += 1; }
+          else if (m.winner === team.name) { stats.pg++; stats.pts += 3; }
+          else stats.pp++;
         }
       });
-      return { name: team.name, pj, pg, pe, pp, gf, gc, dg: gf - gc, pts };
+      return { name: team.name, ...stats, dg: stats.gf - stats.gc };
     }).sort((a, b) => b.pts - a.pts || b.dg - a.dg);
   };
 
+  const formatTimeFull = (ms) => {
+    const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000), c = Math.floor((ms % 1000) / 10);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(c).padStart(2, '0')}`;
+  };
+
   const allPlayers = teams.flatMap(t => t.players.map(p => ({ ...p, teamName: t.name })));
-  const topScorers = [...allPlayers].sort((a, b) => b.goals - a.goals).slice(0, 5);
-  const topKickers = [...allPlayers].sort((a, b) => b.kicks - a.kicks).slice(0, 5);
+  const getTop = (attr) => [...allPlayers].sort((a, b) => b[attr] - a[attr]).slice(0, 5);
 
   if (step === 0) return (
     <div className="app-container">
       <div className="lang-selector-top">
-        {['es', 'en', 'he'].map(l => (
-          <button key={l} className={lang === l ? 'active' : ''} onClick={() => setLang(l)}>{l.toUpperCase()}</button>
-        ))}
+        <button className={lang === 'es' ? 'active' : ''} onClick={() => changeLanguage('es')}>ESPAÑOL</button>
+        <button className={lang === 'en' ? 'active' : ''} onClick={() => changeLanguage('en')}>ENGLISH</button>
       </div>
       <h1 className="title-main">{t.titleConfig}</h1>
       <div className="card-glass">
@@ -134,55 +144,51 @@ const App = () => {
       <div className="registration-grid">
         {Array.from({ length: config.teamCount }).map((_, gIdx) => (
           <div key={gIdx} className="card-team-reg">
-            <input className="team-title-input" value={jugadoresManual[gIdx * config.gameType]?.teamName} onChange={e => {
+            <input className="team-title-input" maxLength={10} value={jugadoresManual[gIdx * config.gameType]?.teamName} onChange={e => {
               const n = [...jugadoresManual];
               for (let i = 0; i < config.gameType; i++) n[(gIdx * config.gameType) + i].teamName = e.target.value;
               setJugadoresManual(n);
             }} />
             <div className="players-input-list">
-              {jugadoresManual.slice(gIdx * config.gameType, (gIdx * config.gameType) + config.gameType).map((j, i) => (
-                <input key={j.id} className="input-player-name" placeholder={`P${i + 1}`} value={j.name} onChange={e => { const n = [...jugadoresManual]; n[j.id].name = e.target.value; setJugadoresManual(n); }} />
+              {jugadoresManual.slice(gIdx * config.gameType, (gIdx * config.gameType) + config.gameType).map((j) => (
+                <input key={j.id} className="input-player-name" placeholder="Nombre" value={j.name} onChange={e => {
+                  const n = [...jugadoresManual]; n[j.id].name = e.target.value; setJugadoresManual(n);
+                }} />
               ))}
             </div>
           </div>
         ))}
       </div>
       <button className="btn-primary" style={{ marginTop: '20px' }} onClick={() => {
-        const organized = [];
-        for (let i = 0; i < config.teamCount; i++) {
-          const group = jugadoresManual.slice(i * config.gameType, (i * config.gameType) + config.gameType).map(p => ({ ...p, goals: 0, goalsMatch: 0, kicks: 0, kicksMatch: 0 }));
-          organized.push({ id: i + 1, name: (jugadoresManual[i * config.gameType]?.teamName || "T").toUpperCase(), players: group });
-        }
-        setTeams(organized); setStep(3);
+        const organized = Array.from({ length: config.teamCount }, (_, i) => ({
+          id: i + 1,
+          name: (jugadoresManual[i * config.gameType]?.teamName || `E${i + 1}`).toUpperCase(),
+          players: jugadoresManual.slice(i * config.gameType, (i * config.gameType) + config.gameType).map(p => ({ ...p, goals: 0, goalsMatch: 0, kicks: 0, kicksMatch: 0 }))
+        }));
+        setTeams(organized); setStep(3); setTimeLeft(config.minutes * 60000);
       }}>{t.initTorneo}</button>
     </div>
   );
 
   return (
-    <div className={`app-container ${lang === 'he' ? 'rtl' : ''} ${victoryEffect ? 'flash-update' : ''}`}>
+    <div className={`app-container ${victoryEffect ? 'flash-update' : ''}`}>
+      <div className="lang-selector-top" style={{ marginBottom: '10px' }}>
+        <button className={lang === 'es' ? 'active' : ''} onClick={() => changeLanguage('es')}>ESPAÑOL</button>
+        <button className={lang === 'en' ? 'active' : ''} onClick={() => changeLanguage('en')}>ENGLISH</button>
+      </div>
+
       <Scoreboard
-        teams={teams} playingTeams={playingTeams} timeLeft={timeLeft}
+        teams={teams} playingTeams={playingTeams} setPlayingTeams={setPlayingTeams} timeLeft={timeLeft}
         timerActive={timerActive} setTimerActive={setTimerActive}
         setTimeLeft={setTimeLeft} config={config} formatTimeFull={formatTimeFull}
         handleStat={handleStat} finishMatch={finishMatch} t={t}
       />
 
       <div className="game-footer">
-        <div className="selectors-label">Equipos en juego:</div>
-        <div className="selectors-row">
-          <select value={playingTeams[0]} onChange={e => setPlayingTeams([parseInt(e.target.value), playingTeams[1]])}>
-            {teams.map((t, i) => <option key={i} value={i} disabled={i === playingTeams[1]}>{t.name}</option>)}
-          </select>
-          <div className="vs-label">VS</div>
-          <select value={playingTeams[1]} onChange={e => setPlayingTeams([playingTeams[0], parseInt(e.target.value)])}>
-            {teams.map((t, i) => <option key={i} value={i} disabled={i === playingTeams[0]}>{t.name}</option>)}
-          </select>
-        </div>
-
         <div className="stat-card overflow-x">
           <h4>{t.statsPos}</h4>
           <table className="pro-table">
-            <thead><tr>{t.tableCols.map(c => <th key={c}>{c}</th>)}</tr></thead>
+            <thead><tr>{(t.tableCols || []).map((c, idx) => <th key={idx}>{c}</th>)}</tr></thead>
             <tbody>
               {getTableData().map((row, i) => (
                 <tr key={i}>
@@ -197,11 +203,15 @@ const App = () => {
         <div className="stats-container-grid">
           <div className="stat-card">
             <h4>{t.statsGoals}</h4>
-            <div className="stat-list">{topScorers.map((p, i) => <p key={i}><span>{p.name}</span> <b>{p.goals}</b></p>)}</div>
+            <div className="stat-list">
+              {getTop('goals').map((p, i) => <p key={i}><span>{p.name} ({p.teamName})</span> <b>{p.goals}</b></p>)}
+            </div>
           </div>
           <div className="stat-card">
             <h4>{t.statsKicks}</h4>
-            <div className="stat-list">{topKickers.map((p, i) => <p key={i}><span>{p.name}</span> <b>{p.kicks}</b></p>)}</div>
+            <div className="stat-list">
+              {getTop('kicks').map((p, i) => <p key={i}><span>{p.name} ({p.teamName})</span> <b>{p.kicks}</b></p>)}
+            </div>
           </div>
         </div>
 
@@ -218,8 +228,8 @@ const App = () => {
           </div>
         </div>
 
-        <button className="btn-warning" onClick={() => { if (confirm(t.resetTable)) { setHistory([]); resetMatchOnly(); } }}>{t.resetTable}</button>
-        <button className="btn-danger-text" onClick={() => { if (confirm(t.resetAll)) { localStorage.clear(); window.location.reload(); } }}>{t.resetAll}</button>
+        <button className="btn-warning" style={{ margin: '10px 0' }} onClick={resetAllStats}>{t.resetTable}</button>
+        <button className="btn-danger-text" onClick={() => confirm(t.resetAll) && (localStorage.clear() || window.location.reload())}>{t.resetAll}</button>
       </div>
     </div>
   );

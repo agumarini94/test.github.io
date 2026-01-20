@@ -434,27 +434,27 @@ body {
 
 .mode-f11 .left-side .player-pos-1 {
   top: 43%;
-  left: 1%;
+  left: 0%;
 }
 
 .mode-f11 .left-side .player-pos-2 {
   top: 5%;
-  left: 12%;
+  left: 4%;
 }
 
 .mode-f11 .left-side .player-pos-3 {
   top: 30%;
-  left: 12%;
+  left: 7%;
 }
 
 .mode-f11 .left-side .player-pos-4 {
   top: 56%;
-  left: 12%;
+  left: 7%;
 }
 
 .mode-f11 .left-side .player-pos-5 {
   top: 82%;
-  left: 12%;
+  left: 4%;
 }
 
 .mode-f11 .left-side .player-pos-6 {
@@ -464,12 +464,12 @@ body {
 
 .mode-f11 .left-side .player-pos-7 {
   top: 30%;
-  left: 26%;
+  left: 24%;
 }
 
 .mode-f11 .left-side .player-pos-8 {
   top: 56%;
-  left: 26%;
+  left: 24%;
 }
 
 .mode-f11 .left-side .player-pos-9 {
@@ -479,67 +479,67 @@ body {
 
 .mode-f11 .left-side .player-pos-10 {
   top: 30%;
-  left: 40%;
+  left: 38%;
 }
 
 .mode-f11 .left-side .player-pos-11 {
   top: 56%;
-  left: 40%;
+  left: 38%;
 }
 
 .mode-f11 .right-side .player-pos-1 {
   top: 43%;
-  right: 1%;
+  right: 0%;
 }
 
 .mode-f11 .right-side .player-pos-2 {
   top: 5%;
-  right: 12%;
+  right: 7%;
 }
 
 .mode-f11 .right-side .player-pos-3 {
   top: 30%;
-  right: 12%;
+  right: 7%;
 }
 
 .mode-f11 .right-side .player-pos-4 {
   top: 56%;
-  right: 12%;
+  right: 7%;
 }
 
 .mode-f11 .right-side .player-pos-5 {
   top: 82%;
-  right: 12%;
+  right: 7%;
 }
 
 .mode-f11 .right-side .player-pos-6 {
   top: 5%;
-  right: 26%;
+  right: 24%;
 }
 
 .mode-f11 .right-side .player-pos-7 {
-  top: 30%;
-  right: 26%;
+  top: 19%;
+  right: 24%;
 }
 
 .mode-f11 .right-side .player-pos-8 {
-  top: 56%;
+  top: 67%;
   right: 26%;
 }
 
 .mode-f11 .right-side .player-pos-9 {
   top: 82%;
-  right: 26%;
+  right: 23%;
 }
 
 .mode-f11 .right-side .player-pos-10 {
   top: 30%;
-  right: 40%;
+  right: 35%;
 }
 
 .mode-f11 .right-side .player-pos-11 {
   top: 56%;
-  right: 40%;
+  right: 38%;
 }
 
 /* --- FOOTER & TABLAS --- */
