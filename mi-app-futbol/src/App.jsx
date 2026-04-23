@@ -4,24 +4,48 @@ import { getSaved } from './helpers';
 import { useLanguage } from './useLanguage';
 import './App.css';
 
+const Modal = ({ modal, onClose }) => {
+  if (!modal) return null;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <p className="modal-msg">{modal.message}</p>
+        <div className="modal-btns">
+          {modal.onConfirm && <button className="modal-cancel" onClick={onClose}>NO</button>}
+          <button className="modal-confirm" onClick={() => { modal.onConfirm?.(); onClose(); }}>
+            {modal.onConfirm ? 'SÍ' : 'OK'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App = () => {
   const { t, lang, changeLanguage } = useLanguage();
 
   const [step, setStep] = useState(() => getSaved('step', 0));
   const [teams, setTeams] = useState(() => getSaved('teams', []));
   const [history, setHistory] = useState(() => getSaved('history', []));
-  const [config, setConfig] = useState(() => getSaved('config', { minutes: 8, teamCount: 3, gameType: 5 }));
+  const [config, setConfig] = useState(() => getSaved('config', { minutes: 8, teamCount: 3, gameType: 5, goalsToWin: 2 }));
   const [jugadoresManual, setJugadoresManual] = useState(() => getSaved('jugadores', []));
   const [timeLeft, setTimeLeft] = useState(() => getSaved('timeLeft', 8 * 60000));
   const [timerActive, setTimerActive] = useState(false);
-  const [playingTeams, setPlayingTeams] = useState([0, 1]);
+  const [playingTeams, setPlayingTeams] = useState(() => getSaved('playingTeams', [0, 1]));
+  const [waitingTeamIdx, setWaitingTeamIdx] = useState(() => getSaved('waitingTeamIdx', null));
   const [victoryEffect, setVictoryEffect] = useState(false);
+  const [modal, setModal] = useState(null);
+  const [matchResult, setMatchResult] = useState(null);
+  const [showStats, setShowStats] = useState(false);
   const timerRef = useRef(null);
+  const resultTimerRef = useRef(null);
+
+  const showConfirm = (message, onConfirm = null) => setModal({ message, onConfirm });
 
   useEffect(() => {
-    const data = { step, teams, history, jugadores: jugadoresManual, config, timeLeft };
+    const data = { step, teams, history, jugadores: jugadoresManual, config, timeLeft, playingTeams, waitingTeamIdx };
     Object.entries(data).forEach(([k, v]) => localStorage.setItem(k, JSON.stringify(v)));
-  }, [step, teams, history, jugadoresManual, config, timeLeft]);
+  }, [step, teams, history, jugadoresManual, config, timeLeft, playingTeams, waitingTeamIdx]);
 
   useEffect(() => {
     if (timerActive && timeLeft > 0) {
@@ -50,15 +74,25 @@ const App = () => {
       if (player && player[type + 'Match'] + amount >= 0) player[type + 'Match'] += amount;
       return nt;
     });
+
+    if (type === 'goals' && amount > 0 && config.goalsToWin > 0) {
+      const [i1, i2] = playingTeams;
+      const g1 = teams[i1].players.reduce((s, p) => s + p.goalsMatch, 0) + (tIdx === i1 ? amount : 0);
+      const g2 = teams[i2].players.reduce((s, p) => s + p.goalsMatch, 0) + (tIdx === i2 ? amount : 0);
+      if (g1 >= config.goalsToWin || g2 >= config.goalsToWin) {
+        const winner = g1 >= config.goalsToWin ? i1 : i2;
+        finishMatch(winner, [g1, g2]);
+      }
+    }
   };
 
-  const finishMatch = (winnerIdx) => {
+  const finishMatch = (winnerIdx, forcedScores = null) => {
     const [idx1, idx2] = playingTeams;
-    const g1 = teams[idx1].players.reduce((s, p) => s + p.goalsMatch, 0);
-    const g2 = teams[idx2].players.reduce((s, p) => s + p.goalsMatch, 0);
+    const g1 = forcedScores ? forcedScores[0] : teams[idx1].players.reduce((s, p) => s + p.goalsMatch, 0);
+    const g2 = forcedScores ? forcedScores[1] : teams[idx2].players.reduce((s, p) => s + p.goalsMatch, 0);
     const matchWinner = winnerIdx === null ? 'draw' : teams[winnerIdx].name;
 
-    setHistory([{ id: Date.now(), team1: teams[idx1].name, team2: teams[idx2].name, score1: g1, score2: g2, winner: matchWinner }, ...history]);
+    setHistory(prev => [{ id: Date.now(), team1: teams[idx1].name, team2: teams[idx2].name, score1: g1, score2: g2, winner: matchWinner }, ...prev]);
     setTeams(prev => prev.map(team => ({
       ...team,
       players: team.players.map(p => ({ ...p, goals: p.goals + p.goalsMatch, kicks: p.kicks + p.kicksMatch, goalsMatch: 0, kicksMatch: 0 }))
@@ -67,6 +101,23 @@ const App = () => {
     setTimeLeft(config.minutes * 60000);
     setVictoryEffect(true);
     setTimeout(() => setVictoryEffect(false), 600);
+
+    if (winnerIdx !== null && teams.length === 3 && waitingTeamIdx !== null) {
+      const loserIdx = winnerIdx === idx1 ? idx2 : idx1;
+      setPlayingTeams([winnerIdx, waitingTeamIdx]);
+      setWaitingTeamIdx(loserIdx);
+      setMatchResult({
+        winner: teams[winnerIdx].name,
+        next1: teams[winnerIdx].name,
+        next2: teams[waitingTeamIdx].name,
+        resting: teams[loserIdx].name
+      });
+    } else {
+      setMatchResult({ winner: winnerIdx !== null ? teams[winnerIdx].name : t.draw });
+    }
+
+    clearTimeout(resultTimerRef.current);
+    resultTimerRef.current = setTimeout(() => setMatchResult(null), 4000);
   };
 
   const autoFinish = () => {
@@ -76,13 +127,13 @@ const App = () => {
   };
 
   const resetAllStats = () => {
-    if (window.confirm(t.resetTable)) {
+    showConfirm(t.resetTable + '?', () => {
       setHistory([]);
       setTeams(prev => prev.map(team => ({
         ...team,
         players: team.players.map(p => ({ ...p, goals: 0, kicks: 0, goalsMatch: 0, kicksMatch: 0 }))
       })));
-    }
+    });
   };
 
   const getTableData = () => {
@@ -113,16 +164,19 @@ const App = () => {
 
   if (step === 0) return (
     <div className="app-container">
-      <div className="lang-selector-top">
-        <button className={lang === 'es' ? 'active' : ''} onClick={() => changeLanguage('es')}>ESPAÑOL</button>
-        <button className={lang === 'en' ? 'active' : ''} onClick={() => changeLanguage('en')}>ENGLISH</button>
-      </div>
-      <h1 className="title-main">{t.titleConfig}</h1>
+      <h1 className="title-main">⚽ FÚTBOL</h1>
       <div className="card-glass">
+        <div className="lang-selector-top">
+          <button className={lang === 'es' ? 'active' : ''} onClick={() => changeLanguage('es')}>ESPAÑOL</button>
+          <button className={lang === 'en' ? 'active' : ''} onClick={() => changeLanguage('en')}>ENGLISH</button>
+        </div>
         <label>{t.matchTime}</label>
         <input type="number" className="input-modern" value={config.minutes} onChange={e => setConfig({ ...config, minutes: parseInt(e.target.value) || 1 })} />
         <label>{t.howManyTeams}</label>
         <input type="number" className="input-modern" value={config.teamCount} onChange={e => setConfig({ ...config, teamCount: Math.min(20, Math.max(2, parseInt(e.target.value) || 2)) })} />
+        <label>{t.goalsToWinLabel}</label>
+        <input type="number" className="input-modern" min="0" value={config.goalsToWin ?? 0} onChange={e => setConfig({ ...config, goalsToWin: Math.max(0, parseInt(e.target.value) || 0) })} />
+        <p className="config-hint">{(config.goalsToWin ?? 0) === 0 ? t.noLimit : `${t.goalsLimit} ${config.goalsToWin} ${t.goalsLimitSuffix}`}</p>
         <div className="game-type-selector">
           {[5, 7, 11].map(num => (
             <button key={num} className={config.gameType === num ? 'active' : ''} onClick={() => setConfig({ ...config, gameType: num })}>F{num}</button>
@@ -165,72 +219,107 @@ const App = () => {
           name: (jugadoresManual[i * config.gameType]?.teamName || `E${i + 1}`).toUpperCase(),
           players: jugadoresManual.slice(i * config.gameType, (i * config.gameType) + config.gameType).map(p => ({ ...p, goals: 0, goalsMatch: 0, kicks: 0, kicksMatch: 0 }))
         }));
-        setTeams(organized); setStep(3); setTimeLeft(config.minutes * 60000);
+        setTeams(organized);
+        setPlayingTeams([0, 1]);
+        setWaitingTeamIdx(config.teamCount === 3 ? 2 : null);
+        setStep(3);
+        setTimeLeft(config.minutes * 60000);
       }}>{t.initTorneo}</button>
     </div>
   );
 
   return (
     <div className={`app-container ${victoryEffect ? 'flash-update' : ''}`}>
-      <div className="lang-selector-top" style={{ marginBottom: '10px' }}>
-        <button className={lang === 'es' ? 'active' : ''} onClick={() => changeLanguage('es')}>ESPAÑOL</button>
-        <button className={lang === 'en' ? 'active' : ''} onClick={() => changeLanguage('en')}>ENGLISH</button>
-      </div>
+      <Modal modal={modal} onClose={() => setModal(null)} />
+
+      {matchResult && (
+        <div className="match-result-banner" onClick={() => setMatchResult(null)}>
+          <div className="mrb-winner">🏆 {matchResult.winner}</div>
+          {matchResult.next1 ? (
+            <>
+              <div className="mrb-next">{t.nextMatch} <b>{matchResult.next1}</b> vs <b>{matchResult.next2}</b></div>
+              <div className="mrb-rest">{t.resting}: {matchResult.resting}</div>
+            </>
+          ) : null}
+          <div className="mrb-close">{t.tapToClose}</div>
+        </div>
+      )}
 
       <Scoreboard
-        teams={teams} playingTeams={playingTeams} setPlayingTeams={setPlayingTeams} timeLeft={timeLeft}
-        timerActive={timerActive} setTimerActive={setTimerActive}
-        setTimeLeft={setTimeLeft} config={config} formatTimeFull={formatTimeFull}
-        handleStat={handleStat} finishMatch={finishMatch} t={t}
+        teams={teams}
+        playingTeams={playingTeams}
+        setPlayingTeams={setPlayingTeams}
+        waitingTeamIdx={waitingTeamIdx}
+        timeLeft={timeLeft}
+        timerActive={timerActive}
+        setTimerActive={setTimerActive}
+        setTimeLeft={setTimeLeft}
+        config={config}
+        formatTimeFull={formatTimeFull}
+        handleStat={handleStat}
+        finishMatch={finishMatch}
+        t={t}
+        showConfirm={showConfirm}
       />
 
-      <div className="game-footer">
-        <div className="stat-card overflow-x">
-          <h4>{t.statsPos}</h4>
-          <table className="pro-table">
-            <thead><tr>{(t.tableCols || []).map((c, idx) => <th key={idx}>{c}</th>)}</tr></thead>
-            <tbody>
-              {getTableData().map((row, i) => (
-                <tr key={i}>
-                  <td className="txt-left"><b>{row.name}</b></td>
-                  <td>{row.pj}</td><td>{row.pg}</td><td>{row.pe}</td><td>{row.pp}</td><td>{row.gf}</td><td>{row.gc}</td><td>{row.dg}</td><td className="txt-gold">{row.pts}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <button className="btn-stats-toggle" onClick={() => setShowStats(v => !v)}>
+        {showStats ? t.hideStats : t.showStats}
+      </button>
 
-        <div className="stats-container-grid">
-          <div className="stat-card">
-            <h4>{t.statsGoals}</h4>
-            <div className="stat-list">
-              {getTop('goals').map((p, i) => <p key={i}><span>{p.name} ({p.teamName})</span> <b>{p.goals}</b></p>)}
-            </div>
+      {showStats && (
+        <div className="game-footer">
+          <div className="lang-selector-top" style={{ marginBottom: '15px' }}>
+            <button className={lang === 'es' ? 'active' : ''} onClick={() => changeLanguage('es')}>ESPAÑOL</button>
+            <button className={lang === 'en' ? 'active' : ''} onClick={() => changeLanguage('en')}>ENGLISH</button>
           </div>
-          <div className="stat-card">
-            <h4>{t.statsKicks}</h4>
-            <div className="stat-list">
-              {getTop('kicks').map((p, i) => <p key={i}><span>{p.name} ({p.teamName})</span> <b>{p.kicks}</b></p>)}
-            </div>
-          </div>
-        </div>
 
-        <div className="stat-card">
-          <h4>{t.history}</h4>
-          <div className="history-list">
-            {history.map(m => (
-              <div key={m.id} className="history-item">
-                <span className="h-team">{m.team1}</span>
-                <span className="h-score">{m.score1} - {m.score2}</span>
-                <span className="h-team">{m.team2}</span>
+          <div className="stat-card overflow-x">
+            <h4>{t.statsPos}</h4>
+            <table className="pro-table">
+              <thead><tr>{(t.tableCols || []).map((c, idx) => <th key={idx}>{c}</th>)}</tr></thead>
+              <tbody>
+                {getTableData().map((row, i) => (
+                  <tr key={i}>
+                    <td className="txt-left"><b>{row.name}</b></td>
+                    <td>{row.pj}</td><td>{row.pg}</td><td>{row.pe}</td><td>{row.pp}</td><td>{row.gf}</td><td>{row.gc}</td><td>{row.dg}</td><td className="txt-gold">{row.pts}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="stats-container-grid">
+            <div className="stat-card">
+              <h4>{t.statsGoals}</h4>
+              <div className="stat-list">
+                {getTop('goals').map((p, i) => <p key={i}><span>{p.name} ({p.teamName})</span> <b>{p.goals}</b></p>)}
               </div>
-            ))}
+            </div>
+            <div className="stat-card">
+              <h4>{t.statsKicks}</h4>
+              <div className="stat-list">
+                {getTop('kicks').map((p, i) => <p key={i}><span>{p.name} ({p.teamName})</span> <b>{p.kicks}</b></p>)}
+              </div>
+            </div>
           </div>
-        </div>
 
-        <button className="btn-warning" style={{ margin: '10px 0' }} onClick={resetAllStats}>{t.resetTable}</button>
-        <button className="btn-danger-text" onClick={() => confirm(t.resetAll) && (localStorage.clear() || window.location.reload())}>{t.resetAll}</button>
-      </div>
+          <div className="stat-card">
+            <h4>{t.history}</h4>
+            <div className="history-list">
+              {history.map(m => (
+                <div key={m.id} className="history-item">
+                  <span className="h-team">{m.team1}</span>
+                  <span className="h-score">{m.score1} - {m.score2}</span>
+                  <span className="h-team">{m.team2}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button className="btn-warning" style={{ margin: '10px 0' }} onClick={resetAllStats}>{t.resetTable}</button>
+          <button className="btn-danger-text" onClick={() => showConfirm(t.resetAllConfirm, () => { localStorage.clear(); window.location.reload(); })}>{t.resetAll}</button>
+        </div>
+      )}
     </div>
   );
 };
